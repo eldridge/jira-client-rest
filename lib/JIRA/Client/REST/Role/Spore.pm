@@ -19,12 +19,27 @@ sub inflate
 sub spawn
 {
 	my $self = shift;
-	my $name = shift;
+	my $type = shift;
 	my $data = shift;
 
-	my $class = "JIRA::Client::REST::$name";
+	die 'spawn may not be called statically' if not ref $self;
+
+	my $class = "JIRA::Client::REST::$type";
 
 	$class->inflate($data, inject => { spore => $self->spore });
+}
+
+sub inject_spawn
+{
+	my $self	= shift;
+	my $args	= shift;
+	my $key		= shift;
+	my $type	= shift;
+	my $data	= shift;
+
+	my $class = "JIRA::Client::REST::$type";
+
+	$args->{inject}->{$key} = $class->inflate($data, inject => { spore => $args->{inject}->{spore} });
 }
 
 1;

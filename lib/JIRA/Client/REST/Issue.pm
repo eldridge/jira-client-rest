@@ -19,7 +19,7 @@ has type		=> (is => 'ro', isa => 'Str');
 has summary		=> (is => 'ro', isa => 'Str');
 has description	=> (is => 'ro', isa => 'Str');
 has resolution	=> (is => 'ro', isa => 'Str');
-has status		=> (is => 'ro', isa => 'Str');
+has status		=> (is => 'ro', isa => 'JIRA::Client::REST::Status');
 
 has _transitions =>
 	is			=> 'ro',
@@ -54,23 +54,31 @@ has worklogs =>
 
 sub inflate
 {
+	shift->unpack(@_);
+}
+
+around unpack => sub
+{
+	my $orig = shift;
 	my $self = shift;
 	my $body = shift;
-
-	use Data::Dump;
+	my $args = { @_ };
 
 	my $href =
 	{
 		id			=> $body->{id},
 		key			=> $body->{key},
 		type		=> $body->{fields}->{issuetype}->{name},
-		status		=> $body->{fields}->{status}->{name},
 		summary		=> $body->{fields}->{summary},
 		description	=> $body->{fields}->{description}
 	};
 
-	return $self->unpack($href, @_);
-}
+	# XXX: this inject_spawn business has some putrid codesmell
+	$self->inject_spawn($args, status => Status => $body->{fields}->{status});
+
+	$self->$orig($href, %$args);
+
+};
 
 sub _build__transitions
 {
