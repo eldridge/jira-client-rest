@@ -91,7 +91,7 @@ sub _build__transitions
 	return { map { $_->name => $_ } @transitions };
 }
 
-sub is_closed { return shift->status eq 'Closed' }
+sub is_closed { return shift->status->name eq 'Closed' }
 
 method transition (Str :$name, Str :$to)
 {
