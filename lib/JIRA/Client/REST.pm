@@ -1,16 +1,26 @@
 package JIRA::Client::REST;
-use Moose;
 
 # ABSTRACT: JIRA REST Client
 
-use JSON qw(decode_json encode_json);
+use Moose;
+
+use MooseX::Types::URI qw(Uri);
+
 use Net::HTTP::Spore;
+use File::ShareDir::PathClass;
+
+use JIRA::Client::REST::Actor;
+use JIRA::Client::REST::Issue;
+use JIRA::Client::REST::Project;
+use JIRA::Client::REST::ProjectRole;
+use JIRA::Client::REST::Status;
+use JIRA::Client::REST::Transition;
+
+use JIRA::Client::REST::ResultSet::Issues;
 
 =head1 DESCRIPTION
 
 JIRA::Client::REST is a wrapper for the L<JIRA REST API|http://docs.atlassian.com/jira/REST/latest/>.
-It is a thin wrapper, returning decoded version of the JSON without any munging
-or mangling.
 
 =head1 SYNOPSIS
 
@@ -24,183 +34,57 @@ or mangling.
     my $issue = $client->get_issue('TICKET-12');
     print $issue->{fields}->{priority}->{value}->{name}."\n";
 
-=begin :prelude
-
-=head1 HEADS UP
-
-This module is under development and some of the REST API hasn't been implemented
-yet.
-
-=end :prelude
-
 =cut
 
-has '_client' => (
-    is => 'rw',
-    lazy => 1,
-    default => sub {
-        my $self = shift;
+has username	=> (is => 'rw', isa => 'Str',		required => 1);
+has password	=> (is => 'rw', isa => 'Str',		required => 1);
+has uri			=> (is => 'rw', isa => Uri,			required => 1, coerce => 1);
+has debug		=> (is => 'rw', isa => 'Bool',		default => 0);
+has spore		=> (is => 'ro', isa => 'Object',	lazy_build => 1);
 
-        my $client = Net::HTTP::Spore->new_from_string(
-            '{
-                "name": "JIRA",
-                "authority": "GITHUB:gphat",
-                "version": "1.0",
-                "methods": {
-                    "get_issue": {
-                        "path": "/rest/api/latest/issue/:id",
-                        "required_params": [
-                            "id"
-                        ],
-                        "optional_params": [
-                            "expand"
-                        ],
-                        "method": "GET",
-                        "authentication": true
-                    },
-                    "get_issue_transitions": {
-                        "path": "/rest/api/latest/issue/:id/transitions",
-                        "required_params": [
-                            "id"
-                        ],
-                        "optional_params": [
-                            "expand"
-                        ],
-                        "method": "GET",
-                        "authentication": true
-                    },
-                    "get_issue_votes": {
-                        "path": "/rest/api/latest/issue/:id/votes",
-                        "required_params": [
-                            "id"
-                        ],
-                        "optional_params": [
-                            "expand"
-                        ],
-                        "method": "GET",
-                        "authentication": true
-                    },
-                    "get_issue_watchers": {
-                        "path": "/rest/api/latest/issue/:id/watchers",
-                        "required_params": [
-                            "id"
-                        ],
-                        "optional_params": [
-                            "expand"
-                        ],
-                        "method": "GET",
-                        "authentication": true
-                    },
-                    "get_project": {
-                        "path": "/rest/api/latest/project/:key",
-                        "required_params": [
-                            "key"
-                        ],
-                        "method": "GET",
-                        "authentication": true
-                    },
-                    "get_project_versions": {
-                        "path": "/rest/api/latest/project/:key/versions",
-                        "required_params": [
-                            "key"
-                        ],
-                        "method": "GET",
-                        "authentication": true
-                    },
-                    "get_version": {
-                        "path": "/rest/api/latest/version/:id",
-                        "required_params": [
-                            "id"
-                        ],
-                        "method": "GET",
-                        "authentication": true
-                    },
-                    "unvote_for_issue": {
-                        "path": "/rest/api/latest/issue/:id/votes",
-                        "required_params": [
-                            "id"
-                        ],
-                        "method": "DELETE",
-                        "authentication": true
-                    },
-                    "unwatch_issue": {
-                        "path": "/rest/api/latest/issue/:id/watchers",
-                        "required_params": [
-                            "id",
-                            "username"
-                        ],
-                        "method": "DELETE",
-                        "authentication": true
-                    },
-                    "vote_for_issue": {
-                        "path": "/rest/api/latest/issue/:id/votes",
-                        "required_params": [
-                            "id"
-                        ],
-                        "method": "POST",
-                        "authentication": true
-                    },
-                    "watch_issue": {
-                        "path": "/rest/api/latest/issue/:id/watchers",
-                        "required_params": [
-                            "id",
-                            "username"
-                        ],
-                        "method": "POST",
-                        "authentication": true
-                    }
-                }
-            }',
-            base_url => $self->url,
-            trace => $self->debug,
-        );
-        $client->enable('Format::JSON');
-        $client->enable('Auth::Basic', username => $self->username, password => $self->password);
-        return $client;
-    }
-);
+has issues =>
+	is			=> 'ro',
+	isa			=> 'JIRA::Client::REST::ResultSet::Issues',
+	lazy_build	=> 1;
 
-has 'debug' => (
-    is => 'rw',
-    isa => 'Bool',
-    default => 0,
-);
+sub _build_issues
+{
+	new JIRA::Client::REST::ResultSet::Issues spore => shift->spore;
+}
 
-=attr password
+sub _build_spore
+{
+	my $self = shift;
 
-Set/Get the password to use when connecting to JIRA.
+	my $share = eval { File::ShareDir::PathClass::dist_dir('JIRA-Client-REST') }
+		|| new Path::Class::Dir;
 
-=cut
+	my $spec = $share->file('jira.spore');
 
-has 'password' => (
-    is => 'rw',
-    isa => 'Str',
-    required => 1
-);
+	die "unable to locate SPORE specification file: $@" if not $spec;
 
-=attr url
+	my $spore = Net::HTTP::Spore->new_from_spec($spec, base_url => $self->uri);
 
-Set/Get the URL for the JIRA instance.
+	$spore->enable('Format::JSON');
+	$spore->enable('Auth::Basic', username => $self->username, password => $self->password);
 
-=cut
+	return $spore;
+}
 
-has 'url' => (
-    is => 'rw',
-    isa => 'Str',
-    required => 1
-);
+sub get_project
+{
+	my $self = shift;
 
-=attr username
+	my $params	= { (scalar @_ > 1) ? (@_) : (key => shift) };
+	my $res		= $self->spore->get_project(%$params);
 
-Set/Get the username to use when connecting to JIRA.
+	return JIRA::Client::REST::Project->inflate($res->{body}, inject => { spore => $self->spore });
+}
 
-=cut
 
-has 'username' => (
-    is => 'rw',
-    isa => 'Str',
-    required => 1
-);
+########################################################################
+## OLD METHODS #########################################################
+########################################################################
 
 =method get_issue($id, $expand)
 
@@ -248,18 +132,6 @@ sub get_issue_watchers {
     my ($self, $id, $expand) = @_;
 
     return $self->_client->get_issue_watchers(id => $id, expand => $expand);
-}
-
-=method get_project($key)
-
-Get the project for the specifed key.
-
-=cut
-
-sub get_project {
-    my ($self, $key) = @_;
-    
-    return $self->_client->get_project(key => $key);
 }
 
 =method get_project_versions($key)
